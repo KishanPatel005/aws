@@ -1,0 +1,364 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  user_type String   // values: SYSTEM_ADMIN, MANAGEMENT, MANAGER, EMPLOYEE
+  name      String
+  email     String   @unique
+  phone     String
+  password  String
+  salary    Float?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  expenses      Expense[]
+  bookings      Booking[]
+  distributions BookingDistribution[]
+  
+  // Payment and Brokerage Relations
+  collectedPayments     PaymentCollection[] @relation("collectedByUser")
+  receivedPayments      PaymentCollection[] @relation("receivedByUser")
+  givenBrokerages       BrokerageDistribution[] @relation("givenByUser")
+  receivedBrokerages    BrokerageDistribution[] @relation("recipientUser")
+  
+  // Ledger relations
+  employeeBalance EmployeeBalance?
+  ledgerEntries  LedgerEntry[]
+  createdLedgerEntries LedgerEntry[] @relation("LedgerCreatedBy")
+
+  @@map("users")
+}
+
+model Expense {
+  id          Int      @id @default(autoincrement())
+  type        String   // SALARY, ADVERTISEMENT, OFFICE, ADVANCE, WITHDRAWAL
+  accountFrom String   // user name or company
+  toUserId    Int?     // FK to User (for salary, advance, withdrawal)
+  month       String?  // for salary booking
+  amount      Float
+  remarks     String?
+  date        DateTime // expense date
+  createdAt   DateTime @default(now())
+
+  // Relations
+  toUser      User?    @relation(fields: [toUserId], references: [id])
+
+  @@map("expenses")
+}
+
+model Builder {
+  id        Int       @id @default(autoincrement())
+  name      String
+  address   String?
+  logo      String?       // file path or URL
+  pocs      Json?         // up to 3 POCs: [{name, phone}]
+  date      DateTime  @default(now())   // Date (default today)
+  status    Boolean   @default(true)    // enable/disable toggle
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  projects  Project[]
+
+  @@map("builders")
+}
+
+model Project {
+  id             Int       @id @default(autoincrement())
+  builderId      Int
+  name           String
+  address        String?
+  area           String?
+  city           String?
+  status         String    // UNDER_CONSTRUCTION, READY_POSSESSION
+  possessionDate DateTime?
+  documents      Json?     // array of file paths
+  date           DateTime  @default(now())   // Date (default today)
+  isEnabled      Boolean   @default(true)    // enable/disable toggle
+  otherCharges   Json?     // [{name, type, rate}]
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  builder        Builder   @relation(fields: [builderId], references: [id], onDelete: Cascade)
+  inventory      Inventory[]
+  bookings       Booking[]
+
+  @@map("projects")
+}
+
+model Inventory {
+  id        Int      @id @default(autoincrement())
+  projectId Int
+  unitType  String   // e.g., 2BHK, 3BHK, Commercial, etc.
+  mou       String   // Sq.ft, Vaar, Sq.mtr
+  size      Float
+  rate      Float
+  amount    Float    // auto = size * rate
+  remarks   String?
+  status    Boolean  @default(true)   // enable/disable
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  bookings  Booking[]
+
+  @@map("inventory")
+}
+
+model Booking {
+  id            Int      @id @default(autoincrement())
+  projectId     Int
+  inventoryId   Int
+  unitNo        String
+  buyerName     String
+  buyerMobile   String
+  referenceName String?
+  rate          Float
+  amount        Float
+  brokeragePct  Float
+  brokerageAmt  Float
+  bookedBy      Int       // FK to User
+  remarks       String?
+  status        String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  project        Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  inventory      Inventory            @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  user           User                 @relation(fields: [bookedBy], references: [id], onDelete: Cascade)
+  distributions  BookingDistribution[]
+  mappings       BrokerageMapping[]
+  distributions2 BrokerageDistribution[]
+
+  @@map("bookings")
+}
+
+model BookingDistribution {
+  id        Int      @id @default(autoincrement())
+  bookingId Int
+  userId    Int?     // null if company
+  sharePct  Float
+  shareAmt  Float
+  remarks   String?
+  createdAt DateTime @default(now())
+
+  booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("booking_distributions")
+}
+
+model PaymentCollection {
+  id           Int      @id @default(autoincrement())
+  type         String    // PROJECT | LAND | RENT | RESALE
+  date         DateTime  @default(now())
+  from         String
+  collectedBy  Int
+  receivedBy   Int
+  amount       Float
+  remarks      String?
+  // link to LandBooking when type = LAND
+  landBookingId Int?
+  landBooking   LandBooking? @relation(fields: [landBookingId], references: [id], onDelete: Cascade)
+  // link to ResaleBooking when type = RESALE
+  resaleBookingId Int?
+  resaleBooking   ResaleBooking? @relation(fields: [resaleBookingId], references: [id], onDelete: Cascade)
+
+  collectedUser User      @relation("collectedByUser", fields: [collectedBy], references: [id])
+  receivedUser  User      @relation("receivedByUser", fields: [receivedBy], references: [id])
+
+  @@map("payment_collections")
+}
+
+model BrokerageMapping {
+  id        Int      @id @default(autoincrement())
+  bookingId Int
+  date      DateTime @default(now())
+  currentDue Float
+  amount    Float
+  remarks   String?
+
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@map("brokerage_mappings")
+}
+
+model BrokerageDistribution {
+  id        Int      @id @default(autoincrement())
+  bookingId Int
+  date      DateTime @default(now())
+  givenBy   Int
+  recipient Int
+  amount    Float
+  remarks   String?
+
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  giver     User    @relation("givenByUser", fields: [givenBy], references: [id])
+  receiver  User    @relation("recipientUser", fields: [recipient], references: [id])
+
+  @@map("brokerage_distributions")
+}
+
+model Land {
+  id            Int       @id @default(autoincrement())
+  name          String
+  date          DateTime  @default(now())
+  address       String?               // optional free text
+  village       String?
+  taluka        String?
+  district      String?
+  googleLink    String?               // maps link
+  mouUnit       String                // Vigha | Vaar
+  size          Float
+  rate          Float
+  amount        Float                 // auto: size * rate
+  ownerName     String
+  ownerMobile   String
+  refName       String?
+  refMobile     String?
+  fpNo          String?               // searchable
+  status        Boolean   @default(true) // enable/disable
+  // documents (store paths as JSON arrays)
+  mapDocs         Json?    // ["uploads/land/.."]
+  villageMapDocs  Json?
+  sevenTwelveDocs Json?
+  fpDocs          Json?
+  // timestamps
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  bookings      LandBooking[]
+
+  @@map("lands")
+}
+
+model LandBooking {
+  id            Int       @id @default(autoincrement())
+  landId        Int
+  date          DateTime  @default(now())
+  buyerName     String
+  buyerMobile   String
+  referenceName String?
+  rate          Float
+  amount        Float           // usually land.rate * land.size (auto), but keep writable
+  brokeragePct  Float           // %
+  brokerageAmt  Float           // auto: amount * pct / 100
+  remarks       String?
+  status        String    @default("PENDING") // PENDING | APPROVED | REJECTED
+
+  land          Land      @relation(fields: [landId], references: [id], onDelete: Cascade)
+  payments      PaymentCollection[]
+
+  @@map("land_bookings")
+}
+
+model ResaleProperty {
+  id          Int       @id @default(autoincrement())
+  date        DateTime  @default(now())
+  type        String    // RENT | RESALE | PRELEASED
+  building    String?
+  propertyName String
+  unitNo      String?
+  propertyType String    // 2BHK, 3BHK, Commercial, etc.
+  size        Float
+  rate        Float
+  amount      Float     // auto = size * rate
+  status      Boolean   @default(true)
+  ownerName   String
+  ownerMobile String
+  refName     String?
+  refMobile   String?
+  additionalCharges Json? // [{name, type, rate}]
+  documents   Json?     // file paths array
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  bookings    ResaleBooking[]
+
+  @@map("resale_properties")
+}
+
+model ResaleBooking {
+  id           Int       @id @default(autoincrement())
+  propertyId   Int
+  date         DateTime  @default(now())
+  buyerName    String
+  buyerMobile  String
+  referenceName String?
+  rate         Float
+  amount       Float
+  // brokerage
+  buyerBrokeragePct  Float
+  buyerBrokerageAmt  Float
+  sellerBrokeragePct Float
+  sellerBrokerageAmt Float
+  remarks      String?
+  status       String    @default("PENDING") // PENDING | APPROVED
+  pdfPath      String?
+
+  property ResaleProperty @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  payments PaymentCollection[]
+
+  @@map("resale_bookings")
+}
+
+// Ledger-based Salary and Advance Management System
+
+model Account {
+  id   Int    @id @default(autoincrement())
+  type String // 'management' | 'company'
+  name String // 'Yogesh', 'Dharmesh', 'bavadiya LLP'
+  
+  // Relations
+  ledgerEntries LedgerEntry[]
+  
+  @@map("accounts")
+}
+
+model EmployeeBalance {
+  employeeId        Int     @id
+  advanceBalance    Decimal @default(0) @db.Decimal(18, 4)
+  salaryDueBalance  Decimal @default(0) @db.Decimal(18, 4)
+  updatedAt         DateTime @updatedAt
+  
+  // Relations
+  employee      User @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  ledgerEntries LedgerEntry[] @relation("EmployeeLedgerEntries")
+  
+  @@map("employee_balances")
+}
+
+model LedgerEntry {
+  id               Int      @id @default(autoincrement())
+  employeeId       Int
+  eventDate        DateTime @default(now())
+  eventType        String   // 'ADVANCE_GIVEN' | 'SALARY_ACCRUAL' | 'SALARY_PAYMENT' | 'ADVANCE_RECOVERY'
+  amount           Decimal  @db.Decimal(18, 4)
+  accountFromId    Int?
+  monthRef         String   // YYYY-MM format
+  note             String?
+  createdBy        Int
+  idempotencyKey   String?  @unique
+  salaryDueDelta   Decimal  @default(0) @db.Decimal(18, 4)
+  advanceDelta     Decimal  @default(0) @db.Decimal(18, 4)
+  createdAt        DateTime @default(now())
+  
+  // Relations
+  employee    User           @relation(fields: [employeeId], references: [id], onDelete: Cascade, map: "ledger_entries_employee_fkey")
+  accountFrom Account?       @relation(fields: [accountFromId], references: [id], onDelete: SetNull, map: "ledger_entries_account_fkey")
+  createdByUser User         @relation("LedgerCreatedBy", fields: [createdBy], references: [id], map: "ledger_entries_created_by_fkey")
+  employeeBalance EmployeeBalance @relation("EmployeeLedgerEntries", fields: [employeeId], references: [employeeId], map: "ledger_entries_employee_balance_fkey")
+  
+  @@index([employeeId, eventDate])
+  @@index([employeeId, monthRef, eventType])
+  @@map("ledger_entries")
+}
