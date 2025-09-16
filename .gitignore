@@ -115,8 +115,7 @@ node_modules
 # Users Environment Variables
 .lock-wscript
 
-# Build output
-dist/
+# Build output 
 build/
 
 # Prisma
@@ -143,9 +142,7 @@ prisma/migrations/
 .Trashes
 ehthumbs.db
 Thumbs.db
-
-# Uploads
-uploads/
+ 
 public/uploads/
 
 # Test files

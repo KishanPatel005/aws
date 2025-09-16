@@ -47,11 +47,14 @@ export const getAdvanceSummary = async (req: Request, res: Response) => {
     // Calculate total salary paid
     const totalSalaryPaid = salaryPayments.reduce((sum, salary) => sum + salary.amount, 0);
 
-    // Calculate net balance based on actual advances vs salary paid
-    // CORRECT LOGIC: Net balance = total salary paid - base salary + total advances
-    // This represents how much more salary needs to be paid (positive) or overpaid (negative)
+    // SIMPLE LOGIC: 
+    // - Remaining advance = Total advances - Total salary paid
+    // - If remaining advance > 0: Employee owes money
+    // - If remaining advance = 0: Balanced
+    // - If remaining advance < 0: Overpaid (shouldn't happen in normal cases)
     const baseSalary = user.salary || 0;
-    const netBalance = totalSalaryPaid - baseSalary + totalAdvances;
+    const remainingAdvance = Math.max(0, totalAdvances - totalSalaryPaid);
+    const netBalance = remainingAdvance; // This is the remaining advance balance
 
     // Filter by month if provided
     let monthAdvances = advances;
@@ -73,6 +76,9 @@ export const getAdvanceSummary = async (req: Request, res: Response) => {
       date: advance.createdAt.toISOString().split('T')[0]
     }));
 
+    // Calculate suggested amount (simple logic)
+    const suggestedAmount = Math.max(0, baseSalary - remainingAdvance);
+
     res.json({
       userId: user.id,
       userName: user.name,
@@ -80,6 +86,8 @@ export const getAdvanceSummary = async (req: Request, res: Response) => {
       totalAdvances,
       totalSalaryPaid,
       netBalance,
+      remainingAdvance,
+      suggestedAmount,
       advanceDetails,
       advances: monthAdvances,
       salaryPayments: monthSalary,
@@ -172,9 +180,15 @@ export const calculateAdvanceAdjustment = async (req: Request, res: Response) =>
     const totalSalaryPaid = salaryPayments.reduce((sum, salary) => sum + salary.amount, 0);
     const baseSalary = user.salary || 0;
     
-    // CORRECT LOGIC: Advance is deducted from salary, not added to it
-    const advanceAdjustment = totalAdvances; // This is the amount to recover from advance
-    const netSalary = Math.max(0, baseSalary - totalAdvances); // Net payment = Salary - Advance
+    // SIMPLE LOGIC: 
+    // - Remaining advance = Total advances - Total salary paid
+    // - Net salary = Base salary - Remaining advance
+    // - If remaining advance > base salary, then net salary = 0
+    const remainingAdvance = Math.max(0, totalAdvances - totalSalaryPaid);
+    const netSalary = Math.max(0, baseSalary - remainingAdvance);
+    
+    // Advance adjustment is the remaining advance that needs to be recovered
+    const advanceAdjustment = remainingAdvance;
 
     res.json({
       userId: user.id,
@@ -184,6 +198,8 @@ export const calculateAdvanceAdjustment = async (req: Request, res: Response) =>
       totalSalaryPaid,
       advanceAdjustment,
       netSalary,
+      remainingAdvance,
+      suggestedAmount: netSalary, // This is the amount that should be paid
       month
     });
   } catch (error) {

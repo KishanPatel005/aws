@@ -48,7 +48,7 @@ export const getDashboardReports = async (req: Request, res: Response) => {
 
     const builderPaid = await prisma.paymentCollection.aggregate({
       where: {
-        type: 'BOOKING',
+        type: 'PROJECT',
         date: {
           gte: startDate,
           lte: now
@@ -77,7 +77,7 @@ export const getDashboardReports = async (req: Request, res: Response) => {
 
     const projectPaid = await prisma.paymentCollection.aggregate({
       where: {
-        type: 'BOOKING',
+        type: 'PROJECT',
         date: {
           gte: startDate,
           lte: now
@@ -117,10 +117,15 @@ export const getDashboardReports = async (req: Request, res: Response) => {
       }
     });
 
-    // Employee-wise reports
+    // Employee-wise reports - Get all payments where employees are involved
     const employeePaid = await prisma.paymentCollection.aggregate({
       where: {
-        type: 'SALARY',
+        OR: [
+          { type: 'PROJECT' },
+          { type: 'LAND' },
+          { type: 'RENT' },
+          { type: 'RESALE' }
+        ],
         date: {
           gte: startDate,
           lte: now
@@ -301,6 +306,237 @@ export const getDashboardReports = async (req: Request, res: Response) => {
   }
 };
 
+// Debug documents - check if files actually exist
+export const debugDocuments = async (req: Request, res: Response) => {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    
+    // Get all lands with documents
+    const lands = await prisma.land.findMany({
+      select: {
+        id: true,
+        name: true,
+        mapDocs: true,
+        villageMapDocs: true,
+        sevenTwelveDocs: true,
+        fpDocs: true
+      }
+    });
+
+    // Get all projects with documents
+    const projects = await prisma.project.findMany({
+      select: {
+        id: true,
+        name: true,
+        documents: true
+      }
+    });
+
+    // Get all resale properties with documents
+    const resaleProperties = await prisma.resaleProperty.findMany({
+      select: {
+        id: true,
+        propertyName: true,
+        documents: true
+      }
+    });
+
+    const debugResults = [];
+    
+    // Check land documents
+    for (const land of lands) {
+      const allDocs = [
+        ...(Array.isArray(land.mapDocs) ? land.mapDocs : []),
+        ...(Array.isArray(land.villageMapDocs) ? land.villageMapDocs : []),
+        ...(Array.isArray(land.sevenTwelveDocs) ? land.sevenTwelveDocs : []),
+        ...(Array.isArray(land.fpDocs) ? land.fpDocs : [])
+      ];
+
+      for (const docPath of allDocs) {
+        const fullPath = path.join(process.cwd(), docPath);
+        const exists = fs.existsSync(fullPath);
+        
+        debugResults.push({
+          type: 'land',
+          id: land.id,
+          name: land.name,
+          documentPath: docPath,
+          fullPath: fullPath,
+          exists: exists,
+          fileSize: exists ? fs.statSync(fullPath).size : 0
+        });
+      }
+    }
+
+    // Check project documents
+    for (const project of projects) {
+      if (project.documents && Array.isArray(project.documents)) {
+        for (const docPath of project.documents) {
+          const fullPath = path.join(process.cwd(), docPath);
+          const exists = fs.existsSync(fullPath);
+          
+          debugResults.push({
+            type: 'project',
+            id: project.id,
+            name: project.name,
+            documentPath: docPath,
+            fullPath: fullPath,
+            exists: exists,
+            fileSize: exists ? fs.statSync(fullPath).size : 0
+          });
+        }
+      }
+    }
+
+    // Check resale property documents
+    for (const property of resaleProperties) {
+      if (property.documents && Array.isArray(property.documents)) {
+        for (const docPath of property.documents) {
+          const fullPath = path.join(process.cwd(), docPath);
+          const exists = fs.existsSync(fullPath);
+          
+          debugResults.push({
+            type: 'resale',
+            id: property.id,
+            name: property.propertyName,
+            documentPath: docPath,
+            fullPath: fullPath,
+            exists: exists,
+            fileSize: exists ? fs.statSync(fullPath).size : 0
+          });
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      results: debugResults,
+      totalDocuments: debugResults.length,
+      existingFiles: debugResults.filter(r => r.exists).length,
+      missingFiles: debugResults.filter(r => !r.exists).length,
+      byType: {
+        land: debugResults.filter(r => r.type === 'land'),
+        project: debugResults.filter(r => r.type === 'project'),
+        resale: debugResults.filter(r => r.type === 'resale')
+      }
+    });
+  } catch (error) {
+    console.error('Error debugging documents:', error);
+    res.status(500).json({ error: 'Failed to debug documents' });
+  }
+};
+
+// Clean up stale document references
+export const cleanupStaleDocuments = async (req: Request, res: Response) => {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    
+    let cleanedCount = 0;
+    
+    // Clean up land documents
+    const lands = await prisma.land.findMany({
+      select: {
+        id: true,
+        mapDocs: true,
+        villageMapDocs: true,
+        sevenTwelveDocs: true,
+        fpDocs: true
+      }
+    });
+
+    for (const land of lands) {
+      const updateData: any = {};
+      let needsUpdate = false;
+
+      // Check each document field
+      const fields = ['mapDocs', 'villageMapDocs', 'sevenTwelveDocs', 'fpDocs'];
+      for (const field of fields) {
+        const docs = land[field as keyof typeof land] as string[];
+        if (Array.isArray(docs)) {
+          const validDocs = docs.filter(docPath => {
+            const fullPath = path.join(process.cwd(), docPath);
+            return fs.existsSync(fullPath);
+          });
+          
+          if (validDocs.length !== docs.length) {
+            updateData[field] = validDocs;
+            needsUpdate = true;
+            cleanedCount += (docs.length - validDocs.length);
+          }
+        }
+      }
+
+      if (needsUpdate) {
+        await prisma.land.update({
+          where: { id: land.id },
+          data: updateData
+        });
+      }
+    }
+
+    // Clean up project documents
+    const projects = await prisma.project.findMany({
+      select: {
+        id: true,
+        documents: true
+      }
+    });
+
+    for (const project of projects) {
+      if (project.documents && Array.isArray(project.documents)) {
+        const validDocs = project.documents.filter(docPath => {
+          const fullPath = path.join(process.cwd(), docPath);
+          return fs.existsSync(fullPath);
+        });
+        
+        if (validDocs.length !== project.documents.length) {
+          await prisma.project.update({
+            where: { id: project.id },
+            data: { documents: validDocs }
+          });
+          cleanedCount += (project.documents.length - validDocs.length);
+        }
+      }
+    }
+
+    // Clean up resale property documents
+    const resaleProperties = await prisma.resaleProperty.findMany({
+      select: {
+        id: true,
+        documents: true
+      }
+    });
+
+    for (const property of resaleProperties) {
+      if (property.documents && Array.isArray(property.documents)) {
+        const validDocs = property.documents.filter(docPath => {
+          const fullPath = path.join(process.cwd(), docPath);
+          return fs.existsSync(fullPath);
+        });
+        
+        if (validDocs.length !== property.documents.length) {
+          await prisma.resaleProperty.update({
+            where: { id: property.id },
+            data: { documents: validDocs }
+          });
+          cleanedCount += (property.documents.length - validDocs.length);
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Cleaned up ${cleanedCount} stale document references`,
+      cleanedCount
+    });
+  } catch (error) {
+    console.error('Error cleaning up stale documents:', error);
+    res.status(500).json({ error: 'Failed to clean up stale documents' });
+  }
+};
+
 // Search documents
 export const searchDocuments = async (req: Request, res: Response) => {
   try {
@@ -355,7 +591,9 @@ export const searchDocuments = async (req: Request, res: Response) => {
           category: 'Project Document',
           uploadedAt: project.createdAt.toISOString(),
           size: 'Unknown',
-          url: `/uploads/projects/${project.id}`,
+          url: project.documents && Array.isArray(project.documents) && project.documents.length > 0 
+            ? project.documents[0] 
+            : null,
           documents: project.documents
         })),
         ...allLands.map(land => {
@@ -375,7 +613,7 @@ export const searchDocuments = async (req: Request, res: Response) => {
             category: 'Land Document',
             uploadedAt: land.date.toISOString(),
             size: 'Unknown',
-            url: `/uploads/land/${land.id}`,
+            url: allDocs.length > 0 ? allDocs[0] : null,
             documents: allDocs
           };
         }),
@@ -387,7 +625,9 @@ export const searchDocuments = async (req: Request, res: Response) => {
           category: 'Resale Document',
           uploadedAt: property.createdAt.toISOString(),
           size: 'Unknown',
-          url: `/uploads/resale/${property.id}`,
+          url: property.documents && Array.isArray(property.documents) && property.documents.length > 0 
+            ? property.documents[0] 
+            : null,
           documents: property.documents
         }))
       ];
@@ -470,7 +710,9 @@ export const searchDocuments = async (req: Request, res: Response) => {
         category: 'Project Document',
         uploadedAt: project.createdAt.toISOString(),
         size: 'Unknown',
-        url: `/uploads/projects/${project.id}`,
+        url: project.documents && Array.isArray(project.documents) && project.documents.length > 0 
+          ? project.documents[0] 
+          : null,
         documents: project.documents
       })),
       ...landDocuments.map(land => {
@@ -490,7 +732,7 @@ export const searchDocuments = async (req: Request, res: Response) => {
           category: 'Land Document',
           uploadedAt: land.date.toISOString(),
           size: 'Unknown',
-          url: `/uploads/land/${land.id}`,
+          url: allDocs.length > 0 ? allDocs[0] : null,
           documents: allDocs
         };
       }),
@@ -502,7 +744,9 @@ export const searchDocuments = async (req: Request, res: Response) => {
         category: 'Resale Document',
         uploadedAt: property.createdAt.toISOString(),
         size: 'Unknown',
-        url: `/uploads/resale/${property.id}`,
+        url: property.documents && Array.isArray(property.documents) && property.documents.length > 0 
+          ? property.documents[0] 
+          : null,
         documents: property.documents
       }))
     ];

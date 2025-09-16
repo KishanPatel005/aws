@@ -1,5 +1,5 @@
 import express from 'express';
-import { getDashboardReports, searchDocuments, getReportBreakdown } from '../controllers/dashboardController';
+import { getDashboardReports, searchDocuments, getReportBreakdown, debugDocuments, cleanupStaleDocuments } from '../controllers/dashboardController';
 import { authenticateToken } from '../middleware/auth';
 
 const router = express.Router();
@@ -12,5 +12,11 @@ router.get('/documents/search', authenticateToken, searchDocuments);
 
 // Get detailed breakdown for a specific report
 router.get('/reports/:reportId/breakdown', authenticateToken, getReportBreakdown);
+
+// Debug documents - check if files actually exist
+router.get('/debug/documents', authenticateToken, debugDocuments);
+
+// Clean up stale document references
+router.post('/cleanup/documents', authenticateToken, cleanupStaleDocuments);
 
 export default router;
